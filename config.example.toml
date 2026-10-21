@@ -1,0 +1,8 @@
+# Copy outside the repository or name the copy config.local.toml.
+# Use forward slashes in Windows paths. These are placeholders, not machine records.
+identity_file = "C:/path/to/existing/private-key"
+known_hosts_file = "C:/path/to/already-verified/known_hosts"
+export_dir = "C:/path/to/your/exports"
+connect_timeout = 5
+operation_timeout = 60
+max_export_bytes = 268435456

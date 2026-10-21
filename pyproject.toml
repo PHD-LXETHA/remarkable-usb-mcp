@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "remarkable-usb-mcp"
+version = "0.1.0"
+description = "USB-only, read-only reMarkable access for MCP clients and Python applications"
+requires-python = ">=3.11"
+license = "MIT"
+readme = "README.md"
+dependencies = ["mcp>=2.3,<3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "build>=1.2,<2"]
+
+[project.scripts]
+remarkable-usb-mcp = "remarkable_usb_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/remarkable_usb_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
