@@ -19,11 +19,12 @@ reconstruct annotated PDFs or certify rendering fidelity.
 
 ## USB-only transport
 
-Before every SSH operation, the module verifies that Windows routes `10.11.99.1` through
-an active adapter whose Plug-and-Play identity is USB, with an on-link source address.
-If no verified USB route is available, it stops **before** opening SSH.
+Before every SSH operation, the module discovers active adapters whose Plug-and-Play
+identity is USB and selects an address on the device's subnet. Discovery is independent
+of the system's default route and other active network connections. If no unique usable
+USB address is available, it stops **before** opening SSH.
 
-The OpenSSH bridge checks the route again, binds the source address and sets Windows
+The OpenSSH bridge checks the USB address again, binds the source address and sets Windows
 `IP_UNICAST_IF` to the selected USB interface. All device traffic stays on that interface,
 with no alternate transport or automatic retry. Existing SSH configuration is bypassed;
 host-key validation is strict and uses only the operator's preverified known-hosts file. Private key bytes
@@ -121,7 +122,8 @@ Independent project; not an official reMarkable product. MIT licensed.
 ## 中文说明
 
 这是独立的只读 USB 连接模块，同时提供 Python 接口与标准 MCP 接口，供阅读器等应用复用。
-当前支持 Windows10/11；每次访问都会检查 USB 路由，并在套接字层绑定 USB 网卡。
+当前支持 Windows10/11；直接识别可用 USB 地址，并在套接字层绑定 USB 网卡。
+不要求 USB 成为系统默认路由，不检查或干预其他网络连接。
 仅使用已核实的 USB 直连；连接条件不满足就停止，不改网络设置、不自动重试。
 
 将示例配置中的三个路径改成自己的密钥、已核实主机身份文件和导出目录，再配置 MCP 客户端。

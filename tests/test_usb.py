@@ -13,7 +13,7 @@ import pytest
 from remarkable_usb_mcp.config import Config, UsbError
 from remarkable_usb_mcp.device import UsbDevice, _bounded_command, document_id
 from remarkable_usb_mcp.proxy import connect_usb_socket
-from remarkable_usb_mcp.route import UsbRoute, parse_usb_route
+from remarkable_usb_mcp.route import ROUTE_SCRIPT, UsbRoute, parse_usb_route, select_usb_route
 
 DOC = "11111111-2222-4333-8444-555555555555"
 
@@ -49,6 +49,89 @@ def test_active_usb_on_link_route_is_accepted():
         )
     )
     assert route == UsbRoute(7, "10.11.99.2")
+
+
+def usb_candidate(**changes):
+    return dict(
+        interface_index=7,
+        prefix_length=27,
+        source_address="10.11.99.2",
+        adapter_id="USB\\SYNTHETIC",
+        status="Up",
+    ) | changes
+
+
+def test_other_adapters_do_not_block_an_available_usb_address():
+    other = usb_candidate(interface_index=8, adapter_id="ROOT\\OTHER")
+    unconfigured = usb_candidate(interface_index=9, source_address="169.254.1.2")
+    assert select_usb_route([other, unconfigured, usb_candidate()]) == UsbRoute(7, "10.11.99.2")
+
+
+def test_repeated_usb_inventory_entries_are_not_ambiguous():
+    assert select_usb_route([usb_candidate()] * 2) == UsbRoute(7, "10.11.99.2")
+
+
+@pytest.mark.parametrize(
+    "candidates",
+    [
+        [],
+        None,
+        {},
+        [None, "invalid", {}],
+        [usb_candidate(adapter_id="ROOT\\OTHER")],
+        [usb_candidate(), usb_candidate(interface_index=8)],
+        [usb_candidate(), usb_candidate(source_address="10.11.99.3")],
+        [usb_candidate()] * 257,
+    ],
+)
+def test_missing_ambiguous_or_malformed_usb_inventory_stops(candidates):
+    with pytest.raises(UsbError, match="no connection attempted"):
+        select_usb_route(candidates)
+
+
+def test_windows_discovery_ignores_system_route_and_other_connections():
+    import base64
+    import json
+    import os
+    import subprocess
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("Windows PowerShell discovery integration")
+    # Only synthetic objects are returned; no network queries or changes occur.
+    fixtures = r"""
+$ErrorActionPreference='Stop'
+function Find-NetRoute { throw 'System route must not be consulted' }
+function Get-NetAdapter {
+  [pscustomobject]@{InterfaceIndex=8; PnPDeviceID='ROOT\OTHER'; Status='Up'}
+  [pscustomobject]@{InterfaceIndex=9; PnPDeviceID='USB\UNCONFIGURED'; Status='Up'}
+  [pscustomobject]@{InterfaceIndex=7; PnPDeviceID='USB\SYNTHETIC'; Status='Up'}
+}
+function Get-NetIPAddress {
+  param($InterfaceIndex, $AddressFamily, $ErrorAction)
+  if($InterfaceIndex -eq 8){throw 'Other connections must not be inspected'}
+  if($InterfaceIndex -eq 7){
+    [pscustomobject]@{IPAddress='10.11.99.2'; PrefixLength=27;
+      AddressState='Preferred'; SkipAsSource=$false}
+    [pscustomobject]@{IPAddress='10.11.99.3'; PrefixLength=27;
+      AddressState='Tentative'; SkipAsSource=$false}
+    [pscustomobject]@{IPAddress='10.11.99.4'; PrefixLength=27;
+      AddressState='Preferred'; SkipAsSource=$true}
+  }
+}
+"""
+    encoded = base64.b64encode((fixtures + ROUTE_SCRIPT).encode("utf-16-le")).decode("ascii")
+    powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    result = subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        capture_output=True,
+        check=True,
+        timeout=15,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    assert select_usb_route(json.loads(result.stdout.decode("utf-8-sig"))) == UsbRoute(
+        7, "10.11.99.2"
+    )
 
 
 @pytest.mark.parametrize(

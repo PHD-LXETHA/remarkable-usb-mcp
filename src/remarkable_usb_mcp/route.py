@@ -1,4 +1,4 @@
-"""Read-only route validation; no interface changes, renewal, probes or fallback."""
+"""Discover USB addresses independently of other network connections."""
 
 from __future__ import annotations
 
@@ -15,21 +15,28 @@ from .config import TARGET, UsbError
 
 ROUTE_SCRIPT = r"""
 $ErrorActionPreference='Stop'
-$routes=@(Find-NetRoute -RemoteIPAddress '10.11.99.1')
-$indexes=@($routes | Select-Object -ExpandProperty InterfaceIndex -Unique)
-if($indexes.Count -ne 1){throw 'Ambiguous target route'}
-$index=$indexes[0]
-$adapter=Get-NetAdapter -InterfaceIndex $index
-$sources=@($routes | Where-Object IPAddress)
-if($sources.Count -ne 1){throw 'Ambiguous source address'}
-$ip=Get-NetIPAddress -InterfaceIndex $index -AddressFamily IPv4 -IPAddress $sources[0].IPAddress
-[pscustomobject]@{
-  interface_index=$index
-  source_address=$ip.IPAddress
-  prefix_length=$ip.PrefixLength
-  adapter_id=$adapter.PnPDeviceID
-  status=[string]$adapter.Status
-} | ConvertTo-Json -Compress
+$adapters=@(Get-NetAdapter | Where-Object {
+  $_.Status -eq 'Up' -and $_.PnPDeviceID -like 'USB\*'
+})
+$candidates=@(foreach($adapter in $adapters){
+  $parameters=@{
+    InterfaceIndex=$adapter.InterfaceIndex
+    AddressFamily='IPv4'
+    ErrorAction='SilentlyContinue'
+  }
+  $addresses=@(Get-NetIPAddress @parameters |
+    Where-Object { $_.AddressState -eq 'Preferred' -and -not $_.SkipAsSource })
+  foreach($ip in $addresses){
+    [pscustomobject]@{
+      interface_index=$adapter.InterfaceIndex
+      source_address=$ip.IPAddress
+      prefix_length=$ip.PrefixLength
+      adapter_id=$adapter.PnPDeviceID
+      status=[string]$adapter.Status
+    }
+  }
+})
+ConvertTo-Json -InputObject $candidates -Compress
 """
 
 
@@ -58,6 +65,20 @@ def parse_usb_route(data: dict) -> UsbRoute:
         raise UsbError("USB-only route unavailable; no connection attempted") from error
 
 
+def select_usb_route(candidates: list[dict]) -> UsbRoute:
+    if not isinstance(candidates, list) or len(candidates) > 256:
+        raise UsbError("Invalid USB address inventory; no connection attempted")
+    usable = set()
+    for candidate in candidates:
+        try:
+            usable.add(parse_usb_route(candidate))
+        except UsbError:
+            continue
+    if len(usable) != 1:
+        raise UsbError("Expected one usable USB device address; no connection attempted")
+    return usable.pop()
+
+
 def check_usb_route() -> UsbRoute:
     if sys.platform != "win32":
         raise UsbError("This release supports the Windows USB route guard only")
@@ -80,7 +101,7 @@ def check_usb_route() -> UsbRoute:
             check=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        return parse_usb_route(json.loads(result.stdout.decode("utf-8-sig")))
+        return select_usb_route(json.loads(result.stdout.decode("utf-8-sig")))
     except (subprocess.SubprocessError, OSError, ValueError) as error:
         raise UsbError(
             "Cannot establish a verified USB-only route; no connection attempted"
