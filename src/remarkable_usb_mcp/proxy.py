@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import struct
 import sys
@@ -31,7 +32,9 @@ def connect_usb_socket(route: UsbRoute, timeout: int) -> socket.socket:
 def relay(connection: socket.socket) -> None:
     def upload():
         try:
-            while data := sys.stdin.buffer.read1(65536):
+            # SSH can finish the remote command before closing its input pipe.
+            # Raw reads avoid holding stdin's buffered-reader lock at shutdown.
+            while data := os.read(sys.stdin.fileno(), 65536):
                 connection.sendall(data)
             connection.shutdown(socket.SHUT_WR)
         except OSError:

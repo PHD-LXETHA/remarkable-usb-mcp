@@ -199,6 +199,42 @@ def test_outgoing_socket_is_bound_to_usb_before_connect(monkeypatch):
     assert calls[3] == ("connect", ("10.11.99.1", 22))
 
 
+def test_bridge_exits_cleanly_when_remote_closes_but_input_pipe_stays_open():
+    import os
+    import subprocess
+    import sys
+
+    code = """
+import os
+import threading
+from remarkable_usb_mcp.proxy import relay
+started = threading.Event()
+read = os.read
+def tracked_read(*args):
+    started.set()
+    return read(*args)
+os.read = tracked_read
+class ClosedRemote:
+    def recv(self, size):
+        if not started.wait(3):
+            raise RuntimeError('Input reader did not start')
+        return b''
+    def close(self):
+        pass
+relay(ClosedRemote())
+"""
+    with subprocess.Popen(
+        [sys.executable, "-c", code],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src")),
+    ) as process:
+        # Keep stdin open until after exit: communicate() would hide the shutdown race.
+        assert process.wait(timeout=8) == 0, process.stderr.read().decode("utf-8", "replace")
+        assert process.stderr.read() == b""
+
+
 @pytest.mark.parametrize(
     "identifier",
     [
